@@ -7,7 +7,7 @@ const channels: Channel[] = [
     category: "news",
     logo: "https://images.pexels.com/photos/6953876/pexels-photo-6953876.jpeg?auto=compress&cs=tinysrgb&w=60&h=60&fit=crop",
     thumbnail: "https://drive.google.com/file/d/14e1UjLKMOgmIIuc9KTFgR0lqxfWusL7n/view?usp=sharing",
-    streamUrl: "https://live-hls-apps-ajd-fa.getaj.net/AJD/index.m3u8",
+    streamUrl: "https://live-hls-apps-aja-fa.getaj.net/AJA/index.m3u8",
     viewers: "2.1M",
     currentShow: "Breaking News Live",
     quality: "HD",
