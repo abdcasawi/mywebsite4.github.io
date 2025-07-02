@@ -70,15 +70,15 @@ const LiveTVPlayer: React.FC<LiveTVPlayerProps> = ({
         enableWorker: true,
         lowLatencyMode: true,
         backBufferLength: 90,
-        maxBufferLength: 30,
+        maxBufferLength: 60,
         maxMaxBufferLength: 600,
         maxBufferSize: 60 * 1000 * 1000,
-        maxBufferHole: 0.5,
+        maxBufferHole: 1,
         highBufferWatchdogPeriod: 2,
         nudgeOffset: 0.1,
         nudgeMaxRetry: 3,
         maxFragLookUpTolerance: 0.25,
-        liveSyncDurationCount: 3,
+        liveSyncDurationCount: 5,
         liveMaxLatencyDurationCount: Infinity,
         liveDurationInfinity: false,
         liveBackBufferLength: Infinity,
@@ -139,8 +139,12 @@ const LiveTVPlayer: React.FC<LiveTVPlayerProps> = ({
           }
           setIsLoading(false);
         } else {
+          // Handle non-fatal errors more gracefully
           if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            console.warn('Non-fatal media error, attempting recovery:', data.details);
             hls.recoverMediaError();
+          } else if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            console.warn('Non-fatal network error:', data.details);
           }
         }
       });
