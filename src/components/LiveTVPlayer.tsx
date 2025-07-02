@@ -1,6 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import shaka from 'shaka-player/dist/shaka-player.ui.js';
-import 'shaka-player/dist/controls.css';
+import Hls from 'hls.js';
 import { 
   X, 
   Volume2, 
@@ -17,7 +16,9 @@ import {
   Download,
   Share,
   Heart,
-  MessageCircle
+  MessageCircle,
+  Wifi,
+  Signal
 } from 'lucide-react';
 
 interface LiveTVPlayerProps {
@@ -38,10 +39,8 @@ const LiveTVPlayer: React.FC<LiveTVPlayerProps> = ({
   onFullscreenChange
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const videoContainerRef = useRef<HTMLDivElement>(null);
-  const playerRef = useRef<shaka.Player | null>(null);
-  const uiRef = useRef<shaka.ui.Overlay | null>(null);
-  const [isPlaying, setIsPlaying] = useState(true);
+  const hlsRef = useRef<Hls | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
@@ -54,170 +53,167 @@ const LiveTVPlayer: React.FC<LiveTVPlayerProps> = ({
   const [showControls, setShowControls] = useState(true);
   const [isFavorite, setIsFavorite] = useState(false);
   const [viewerCount, setViewerCount] = useState('2.1M');
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
 
   useEffect(() => {
     const video = videoRef.current;
-    const videoContainer = videoContainerRef.current;
-    if (!video || !videoContainer) return;
+    if (!video) return;
 
     setIsLoading(true);
     setError(null);
+    setConnectionStatus('connecting');
 
     // Clean up previous instance
-    if (uiRef.current) {
-      uiRef.current.destroy();
-      uiRef.current = null;
-    }
-    if (playerRef.current) {
-      playerRef.current.destroy();
-      playerRef.current = null;
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
     }
 
-    // Install built-in polyfills to patch browser incompatibilities
-    shaka.polyfill.installAll();
-
-    // Check to see if the browser supports the basic APIs Shaka needs
-    if (shaka.Player.isBrowserSupported()) {
-      // Create a Player instance
-      const player = new shaka.Player(video);
-      playerRef.current = player;
-
-      // Configure the player
-      player.configure({
-        streaming: {
-          rebufferingGoal: 10,
-          bufferingGoal: 30,
-          bufferBehind: 30,
-          retryParameters: {
-            timeout: 30000,
-            maxAttempts: 4,
-            baseDelay: 1000,
-            backoffFactor: 2,
-            fuzzFactor: 0.5
-          },
-          stallEnabled: true,
-          stallThreshold: 1,
-          stallSkip: 0.1,
-          useNativeHlsOnSafari: true,
-          lowLatencyMode: true,
-          inaccurateManifestTolerance: 0,
-          liveSync: true
-        },
-        abr: {
-          enabled: true,
-          useNetworkInformation: true,
-          defaultBandwidthEstimate: 1000000,
-          switchInterval: 8,
-          bandwidthUpgradeTarget: 0.85,
-          bandwidthDowngradeTarget: 0.95
-        },
-        manifest: {
-          retryParameters: {
-            timeout: 30000,
-            maxAttempts: 4,
-            baseDelay: 1000,
-            backoffFactor: 2,
-            fuzzFactor: 0.5
-          },
-          availabilityWindowOverride: 0,
-          disableAudio: false,
-          disableVideo: false,
-          disableText: true,
-          defaultPresentationDelay: 10,
-          segmentRelativeVttTiming: false
+    // Check if HLS is supported
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        backBufferLength: 90,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 600,
+        maxBufferSize: 60 * 1000 * 1000,
+        maxBufferHole: 0.5,
+        highBufferWatchdogPeriod: 2,
+        nudgeOffset: 0.1,
+        nudgeMaxRetry: 3,
+        maxFragLookUpTolerance: 0.25,
+        liveSyncDurationCount: 3,
+        liveMaxLatencyDurationCount: Infinity,
+        liveDurationInfinity: false,
+        liveBackBufferLength: Infinity,
+        maxLiveSyncPlaybackRate: 1,
+        manifestLoadingTimeOut: 10000,
+        manifestLoadingMaxRetry: 3,
+        manifestLoadingRetryDelay: 1000,
+        levelLoadingTimeOut: 10000,
+        levelLoadingMaxRetry: 4,
+        levelLoadingRetryDelay: 1000,
+        fragLoadingTimeOut: 20000,
+        fragLoadingMaxRetry: 6,
+        fragLoadingRetryDelay: 1000,
+        startFragPrefetch: false,
+        testBandwidth: true,
+        progressive: false,
+        debug: false
+      });
+      
+      hlsRef.current = hls;
+      
+      hls.loadSource(streamUrl);
+      hls.attachMedia(video);
+      
+      hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
+        console.log('HLS manifest loaded, found ' + data.levels.length + ' quality levels');
+        setIsLoading(false);
+        setConnectionStatus('connected');
+        setQualityLevels(data.levels);
+        setStreamInfo({
+          levels: data.levels.length,
+          firstLevel: data.firstLevel,
+          audioTracks: data.audioTracks?.length || 0,
+          subtitles: data.subtitleTracks?.length || 0
+        });
+        
+        // Auto-play with user gesture handling
+        const playPromise = video.play();
+        if (playPromise !== undefined) {
+          playPromise
+            .then(() => {
+              setIsPlaying(true);
+            })
+            .catch((error) => {
+              console.warn('Auto-play failed:', error);
+              setIsPlaying(false);
+            });
         }
       });
 
-      // Create UI overlay
-      const ui = new shaka.ui.Overlay(player, videoContainer, video);
-      uiRef.current = ui;
+      hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
+        setCurrentQuality(data.level);
+      });
 
-      // Configure UI
-      const config = {
-        addSeekBar: false,
-        addBigPlayButton: false,
-        controlPanelElements: [
-          'play_pause',
-          'mute',
-          'volume',
-          'fullscreen'
-        ],
-        overflowMenuButtons: [
-          'quality',
-          'captions',
-          'cast'
-        ],
-        fadeDelay: 3000,
-        doubleClickForFullscreen: true,
-        singleClickForPlayAndPause: true,
-        enableKeyboardPlaybackControls: true,
-        enableFullscreenOnRotation: true,
-        forceLandscapeOnFullscreen: true
-      };
-      ui.configure(config);
-
-      // Listen for error events
-      player.addEventListener('error', (event: any) => {
-        console.error('Shaka Player Error:', event.detail);
-        const errorDetail = event.detail;
+      hls.on(Hls.Events.ERROR, (event, data) => {
+        console.error('HLS Error:', data);
         
-        if (errorDetail.severity === shaka.util.Error.Severity.CRITICAL) {
-          setError(`Critical error: ${errorDetail.message || 'Unable to play the stream'}`);
+        if (data.fatal) {
+          setConnectionStatus('error');
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              setError('Network error: Unable to load the stream. Please check your connection.');
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              setError('Media error: The stream format is not supported.');
+              break;
+            default:
+              setError('Fatal error: Unable to play the stream.');
+              break;
+          }
           setIsLoading(false);
         } else {
-          console.warn('Non-critical Shaka error:', errorDetail.message);
+          // Try to recover from non-fatal errors
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            console.log('Trying to recover from media error');
+            hls.recoverMediaError();
+          }
         }
       });
 
-      // Listen for adaptation events
-      player.addEventListener('adaptation', () => {
-        const tracks = player.getVariantTracks();
-        const activeTrack = tracks.find(track => track.active);
-        if (activeTrack) {
-          setCurrentQuality(activeTrack.height || 0);
+      hls.on(Hls.Events.FRAG_LOADED, () => {
+        if (error) {
+          setError(null);
+          setConnectionStatus('connected');
         }
       });
 
-      // Listen for loading events
-      player.addEventListener('loading', () => {
-        setIsLoading(true);
-      });
-
-      player.addEventListener('loaded', () => {
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Native HLS support (Safari)
+      video.src = streamUrl;
+      
+      const handleLoadedMetadata = () => {
         setIsLoading(false);
-        const tracks = player.getVariantTracks();
-        setQualityLevels(tracks);
-        setStreamInfo({
-          levels: tracks.length,
-          audioTracks: player.getAudioLanguages().length,
-          subtitles: player.getTextTracks().length
-        });
-      });
-
-      // Load the manifest
-      player.load(streamUrl).then(() => {
-        console.log('Stream loaded successfully');
+        setConnectionStatus('connected');
+        const playPromise = video.play();
+        if (playPromise !== undefined) {
+          playPromise
+            .then(() => {
+              setIsPlaying(true);
+            })
+            .catch((error) => {
+              console.warn('Auto-play failed:', error);
+              setIsPlaying(false);
+            });
+        }
+      };
+      
+      const handleError = () => {
+        setError('Failed to load HLS stream. Please try again.');
         setIsLoading(false);
-        // Remove explicit video.play() call - autoPlay attribute handles this
-      }).catch((error) => {
-        console.error('Error loading stream:', error);
-        setError(`Failed to load stream: ${error.message}`);
-        setIsLoading(false);
-      });
+        setConnectionStatus('error');
+      };
 
+      video.addEventListener('loadedmetadata', handleLoadedMetadata);
+      video.addEventListener('error', handleError);
+      
+      return () => {
+        video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        video.removeEventListener('error', handleError);
+      };
     } else {
-      setError('Browser not supported for adaptive streaming');
+      setError('HLS streaming is not supported in this browser.');
       setIsLoading(false);
+      setConnectionStatus('error');
     }
 
     return () => {
-      if (uiRef.current) {
-        uiRef.current.destroy();
-        uiRef.current = null;
-      }
-      if (playerRef.current) {
-        playerRef.current.destroy();
-        playerRef.current = null;
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
       }
     };
   }, [streamUrl]);
@@ -259,8 +255,11 @@ const LiveTVPlayer: React.FC<LiveTVPlayerProps> = ({
 
     if (isPlaying) {
       video.pause();
+      setIsPlaying(false);
     } else {
-      video.play().catch(console.error);
+      video.play().then(() => {
+        setIsPlaying(true);
+      }).catch(console.error);
     }
   };
 
@@ -268,6 +267,7 @@ const LiveTVPlayer: React.FC<LiveTVPlayerProps> = ({
     const video = videoRef.current;
     if (!video) return;
     video.muted = !video.muted;
+    setIsMuted(video.muted);
   };
 
   const handleVolumeChange = (newVolume: number) => {
@@ -278,14 +278,16 @@ const LiveTVPlayer: React.FC<LiveTVPlayerProps> = ({
     setVolume(newVolume);
     if (newVolume === 0) {
       video.muted = true;
+      setIsMuted(true);
     } else if (video.muted) {
       video.muted = false;
+      setIsMuted(false);
     }
   };
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
-      videoContainerRef.current?.requestFullscreen().catch(console.error);
+      videoRef.current?.requestFullscreen().catch(console.error);
       setIsPlayerFullscreen(true);
       onFullscreenChange?.(true);
     } else {
@@ -296,48 +298,64 @@ const LiveTVPlayer: React.FC<LiveTVPlayerProps> = ({
   };
 
   const restartStream = () => {
-    const player = playerRef.current;
     const video = videoRef.current;
-    if (!player || !video) return;
+    if (!video) return;
 
     setIsLoading(true);
     setError(null);
+    setConnectionStatus('connecting');
     
-    player.load(streamUrl).then(() => {
-      // Let autoPlay handle playback initiation
-    }).catch((error) => {
-      setError(`Failed to restart stream: ${error.message}`);
-      setIsLoading(false);
-    });
-  };
-
-  const changeQuality = (height: number) => {
-    const player = playerRef.current;
-    if (!player) return;
-
-    if (height === -1) {
-      // Enable adaptive bitrate
-      player.configure({ abr: { enabled: true } });
+    if (hlsRef.current) {
+      hlsRef.current.stopLoad();
+      hlsRef.current.startLoad();
     } else {
-      // Disable ABR and select specific quality
-      player.configure({ abr: { enabled: false } });
-      const tracks = player.getVariantTracks();
-      const selectedTrack = tracks.find(track => track.height === height);
-      if (selectedTrack) {
-        player.selectVariantTrack(selectedTrack, true);
-      }
+      video.load();
     }
-    setCurrentQuality(height);
-    setShowSettings(false);
+    
+    setTimeout(() => {
+      video.play().then(() => {
+        setIsPlaying(true);
+      }).catch(console.error);
+    }, 1000);
   };
 
-  const getQualityLabel = (track: any) => {
-    if (track.height) {
-      return `${track.height}p`;
-    } else if (track.bandwidth) {
-      return `${Math.round(track.bandwidth / 1000)}k`;
+  const changeQuality = (levelIndex: number) => {
+    if (hlsRef.current) {
+      hlsRef.current.currentLevel = levelIndex;
+      setCurrentQuality(levelIndex);
+      setShowSettings(false);
+    }
+  };
+
+  const getQualityLabel = (level: any) => {
+    if (level.height) {
+      return `${level.height}p`;
+    } else if (level.bitrate) {
+      return `${Math.round(level.bitrate / 1000)}k`;
     }
     return 'Unknown';
+  };
+
+  const getConnectionStatusIcon = () => {
+    switch (connectionStatus) {
+      case 'connected':
+        return <Signal size={16} className="text-green-400" />;
+      case 'error':
+        return <X size={16} className="text-red-400" />;
+      default:
+        return <Wifi size={16} className="text-yellow-400 animate-pulse" />;
+    }
+  };
+
+  const getConnectionStatusText = () => {
+    switch (connectionStatus) {
+      case 'connected':
+        return 'Connected';
+      case 'error':
+        return 'Connection Error';
+      default:
+        return 'Connecting...';
+    }
   };
 
   return (
@@ -364,6 +382,10 @@ const LiveTVPlayer: React.FC<LiveTVPlayerProps> = ({
               </div>
               <div className="flex items-center space-x-4 mt-1">
                 <span className="text-gray-400 text-sm">{viewerCount} viewers</span>
+                <div className="flex items-center space-x-1 text-gray-400 text-sm">
+                  {getConnectionStatusIcon()}
+                  <span>{getConnectionStatusText()}</span>
+                </div>
                 {streamInfo && (
                   <span className="text-gray-400 text-sm">
                     {streamInfo.levels} quality levels
@@ -400,43 +422,46 @@ const LiveTVPlayer: React.FC<LiveTVPlayerProps> = ({
           </div>
         </div>
 
-        {/* Video Player Container */}
+        {/* Video Player */}
         <div className="relative bg-black">
-          <div 
-            ref={videoContainerRef}
-            className={`relative ${isPlayerFullscreen ? 'h-screen' : 'aspect-video'}`}
-          >
-            <video
-              ref={videoRef}
-              className="w-full h-full bg-black"
-              autoPlay
-              muted={isMuted}
-              playsInline
-              preload="metadata"
-              onPlay={() => setIsPlaying(true)}
-              onPause={() => setIsPlaying(false)}
-              onVolumeChange={(e) => {
-                const video = e.target as HTMLVideoElement;
-                setIsMuted(video.muted);
-                setVolume(video.volume);
-              }}
-            />
-          </div>
+          <video
+            ref={videoRef}
+            className={`w-full ${isPlayerFullscreen ? 'h-screen' : 'aspect-video'} bg-black`}
+            controls={false}
+            muted={isMuted}
+            playsInline
+            preload="metadata"
+            onPlay={() => setIsPlaying(true)}
+            onPause={() => setIsPlaying(false)}
+            onVolumeChange={(e) => {
+              const video = e.target as HTMLVideoElement;
+              setIsMuted(video.muted);
+              setVolume(video.volume);
+            }}
+            onWaiting={() => setIsLoading(true)}
+            onCanPlay={() => setIsLoading(false)}
+            onLoadStart={() => setIsLoading(true)}
+            onLoadedData={() => setIsLoading(false)}
+          />
 
           {/* Loading Overlay */}
           {isLoading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
+            <div className="absolute inset-0 flex items-center justify-center bg-black/80">
               <div className="text-center">
                 <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-orange-500 mx-auto mb-4"></div>
                 <p className="text-white text-lg mb-2">Loading Stream...</p>
                 <p className="text-gray-400 text-sm">Connecting to {channelName}</p>
+                <div className="flex items-center justify-center space-x-2 mt-3">
+                  {getConnectionStatusIcon()}
+                  <span className="text-gray-400 text-sm">{getConnectionStatusText()}</span>
+                </div>
               </div>
             </div>
           )}
 
           {/* Error Overlay */}
           {error && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/90 z-10">
+            <div className="absolute inset-0 flex items-center justify-center bg-black/90">
               <div className="text-center p-8 max-w-md">
                 <div className="text-red-500 mb-6">
                   <X size={64} className="mx-auto" />
@@ -464,7 +489,7 @@ const LiveTVPlayer: React.FC<LiveTVPlayerProps> = ({
 
           {/* Settings Panel */}
           {showSettings && qualityLevels.length > 0 && (
-            <div className="absolute top-4 right-4 bg-black/95 backdrop-blur-sm rounded-xl p-6 min-w-64 border border-gray-700 z-20">
+            <div className="absolute top-4 right-4 bg-black/95 backdrop-blur-sm rounded-xl p-6 min-w-64 border border-gray-700">
               <h4 className="text-white font-bold text-lg mb-4">Stream Settings</h4>
               
               <div className="space-y-4">
@@ -482,16 +507,16 @@ const LiveTVPlayer: React.FC<LiveTVPlayerProps> = ({
                         <Monitor size={16} />
                       </div>
                     </button>
-                    {qualityLevels.map((track, index) => (
+                    {qualityLevels.map((level, index) => (
                       <button
                         key={index}
-                        onClick={() => changeQuality(track.height)}
+                        onClick={() => changeQuality(index)}
                         className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${
-                          currentQuality === track.height ? 'bg-orange-500 text-white' : 'text-gray-300 hover:bg-gray-700'
+                          currentQuality === index ? 'bg-orange-500 text-white' : 'text-gray-300 hover:bg-gray-700'
                         }`}
                       >
                         <div className="flex items-center justify-between">
-                          <span>{getQualityLabel(track)} - {Math.round(track.bandwidth / 1000)}kbps</span>
+                          <span>{getQualityLabel(level)} - {Math.round(level.bitrate / 1000)}kbps</span>
                           <Smartphone size={16} />
                         </div>
                       </button>
@@ -502,7 +527,7 @@ const LiveTVPlayer: React.FC<LiveTVPlayerProps> = ({
             </div>
           )}
 
-          {/* Custom Controls Overlay */}
+          {/* Controls Overlay */}
           <div className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-6 transition-transform duration-300 ${
             isPlayerFullscreen && !showControls ? 'translate-y-full' : 'translate-y-0'
           }`}>
@@ -579,14 +604,21 @@ const LiveTVPlayer: React.FC<LiveTVPlayerProps> = ({
               <div className="flex items-center space-x-6">
                 <div>
                   <p className="text-gray-300 text-sm">Now Streaming</p>
-                  <p className="text-white font-medium">Live Adaptive Stream</p>
+                  <p className="text-white font-medium">Live HLS Stream</p>
                 </div>
                 <div>
                   <p className="text-gray-300 text-sm">Quality</p>
                   <p className="text-white font-medium">
                     {currentQuality === -1 ? 'Auto' : 
-                     currentQuality > 0 ? `${currentQuality}p` : 'Auto'}
+                     qualityLevels[currentQuality] ? getQualityLabel(qualityLevels[currentQuality]) : 'Auto'}
                   </p>
+                </div>
+                <div>
+                  <p className="text-gray-300 text-sm">Connection</p>
+                  <div className="flex items-center space-x-1">
+                    {getConnectionStatusIcon()}
+                    <span className="text-white font-medium text-sm">{getConnectionStatusText()}</span>
+                  </div>
                 </div>
                 {streamInfo && (
                   <div>
