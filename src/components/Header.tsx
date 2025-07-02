@@ -18,7 +18,7 @@ const Header = () => {
               </div>
               <div>
                 <h1 className="text-xl font-bold bg-gradient-to-r from-orange-400 to-red-400 bg-clip-text text-transparent">
-                  StreamHub Pro
+                  StreamABD Pro
                 </h1>
                 <p className="text-xs text-gray-400">IPTV Platform</p>
               </div>
