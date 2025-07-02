@@ -198,10 +198,7 @@ const LiveTVPlayer: React.FC<LiveTVPlayerProps> = ({
       player.load(streamUrl).then(() => {
         console.log('Stream loaded successfully');
         setIsLoading(false);
-        video.play().catch((err) => {
-          console.warn('Auto-play failed:', err);
-          setIsPlaying(false);
-        });
+        // Remove explicit video.play() call - autoPlay attribute handles this
       }).catch((error) => {
         console.error('Error loading stream:', error);
         setError(`Failed to load stream: ${error.message}`);
@@ -307,7 +304,7 @@ const LiveTVPlayer: React.FC<LiveTVPlayerProps> = ({
     setError(null);
     
     player.load(streamUrl).then(() => {
-      video.play().catch(console.error);
+      // Let autoPlay handle playback initiation
     }).catch((error) => {
       setError(`Failed to restart stream: ${error.message}`);
       setIsLoading(false);
