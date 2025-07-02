@@ -78,7 +78,7 @@ const LiveTVPlayer: React.FC<LiveTVPlayerProps> = ({
         maxBufferLength: 30,
         maxMaxBufferLength: 600,
         maxBufferSize: 60 * 1000 * 1000,
-        maxBufferHole: 1.5,
+        maxBufferHole: 5,
         highBufferWatchdogPeriod: 2,
         nudgeOffset: 0.1,
         nudgeMaxRetry: 3,
